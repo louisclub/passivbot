@@ -149,7 +149,7 @@ def extract_bounds_tuple_list_from_config(config) -> [Bound]:
 
 
 def get_bound_keys_ignored():
-    return ["enforce_exposure_limit"]
+    return ["enforce_exposure_limit", "dca_mode", "dca_market_so"]
 
 
 # ============================================================================
