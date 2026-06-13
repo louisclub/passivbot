@@ -177,6 +177,327 @@ fn calc_reentry_price_ask(
     }
 }
 
+pub fn calc_dca_entries_long(
+    exchange_params: &ExchangeParams,
+    bot_params: &BotParams,
+    state_params: &StateParams,
+    position: &Position,
+) -> Vec<Order> {
+    if bot_params.wallet_exposure_limit == 0.0 || state_params.balance <= 0.0 {
+        return vec![];
+    }
+    let balance = state_params.balance;
+    let wel = bot_params.wallet_exposure_limit;
+    let base_cost = balance * wel * bot_params.dca_base_order_qty_pct;
+    let safety_cost = balance * wel * bot_params.dca_safety_order_qty_pct;
+    let vol_scale = bot_params.dca_safety_order_volume_scale;
+    let step_scale = bot_params.dca_safety_order_step_scale;
+    let dev_pct = bot_params.dca_price_deviation_pct;
+    let max_so = bot_params.dca_max_safety_orders;
+    let max_active = bot_params.dca_max_active_so;
+
+    // Use current price as reference for initial qty calculation
+    let current_price = state_params.order_book.bid;
+    if current_price <= 0.0 {
+        return vec![];
+    }
+
+    // No position — check if we can place the initial entry
+    if position.size == 0.0 {
+        // Initial entry: use EMA-based entry price like grid mode
+        let initial_entry_price = calc_ema_price_bid(
+            exchange_params.price_step,
+            state_params.order_book.bid,
+            state_params.ema_bands.lower,
+            bot_params.entry_initial_ema_dist,
+        );
+        if initial_entry_price <= exchange_params.price_step {
+            return vec![];
+        }
+        let base_qty = round_(
+            cost_to_qty(base_cost, initial_entry_price, exchange_params.c_mult),
+            exchange_params.qty_step,
+        );
+        let base_qty = f64::max(base_qty, calc_min_entry_qty(initial_entry_price, exchange_params));
+        return vec![Order {
+            qty: base_qty,
+            price: initial_entry_price,
+            order_type: OrderType::EntryDcaLong,
+        }];
+    }
+
+    // Position is open — check wallet exposure before placing SOs
+    let current_we = calc_wallet_exposure(
+        exchange_params.c_mult,
+        balance,
+        position.size,
+        position.price,
+    );
+    if current_we >= bot_params.wallet_exposure_limit {
+        return vec![];
+    }
+
+    // Reconstruct P0 and place next SOs
+    // Build SO size schedule at current_price (will be corrected via P0 reconstruction)
+    let base_qty_ref = cost_to_qty(base_cost, current_price, exchange_params.c_mult);
+
+    // Build price ratios schedule
+    let mut price_ratios = vec![0.0f64; max_so];
+    if max_so > 0 {
+        price_ratios[0] = 1.0 - dev_pct;
+        for i in 1..max_so {
+            price_ratios[i] = price_ratios[i - 1] * (1.0 - dev_pct * step_scale.powi(i as i32));
+        }
+    }
+
+    // Build SO sizes at current_price
+    let mut so_sizes_ref = vec![0.0f64; max_so];
+    for i in 0..max_so {
+        so_sizes_ref[i] = cost_to_qty(
+            safety_cost * vol_scale.powi(i as i32),
+            current_price,
+            exchange_params.c_mult,
+        );
+    }
+
+    // Build cumulative qty schedule
+    let mut cumulative_qty = vec![0.0f64; max_so + 1];
+    cumulative_qty[0] = base_qty_ref;
+    for n in 1..=max_so {
+        cumulative_qty[n] = cumulative_qty[n - 1] + so_sizes_ref[n - 1];
+    }
+
+    // Infer N (filled SOs) from position size
+    let pos_size = position.size;
+    let step_size = if max_so > 0 { so_sizes_ref[0] } else { base_qty_ref };
+    let tolerance = 0.1 * step_size;
+    let mut n_filled: usize = 0;
+    let mut best_diff = f64::INFINITY;
+    for n in 0..=max_so {
+        let diff = (pos_size - cumulative_qty[n]).abs();
+        if diff < best_diff {
+            best_diff = diff;
+            n_filled = n;
+        }
+    }
+    // If best match is too far off, default to n_filled=0
+    if best_diff > tolerance.max(base_qty_ref * 0.5) {
+        n_filled = 0;
+    }
+
+    // If all SOs filled, no more entries
+    if n_filled >= max_so {
+        return vec![];
+    }
+
+    // Reconstruct P0 from pos_price and N
+    let p0 = if n_filled == 0 {
+        // Only base order filled; P0 = pos_price (since base order was at P0)
+        position.price
+    } else {
+        // weighted_ratio = base_qty_ref * 1.0 + sum(so_sizes_ref[i] * price_ratios[i], i=0..n_filled-1)
+        let mut weighted_ratio = base_qty_ref;
+        for i in 0..n_filled {
+            weighted_ratio += so_sizes_ref[i] * price_ratios[i];
+        }
+        if weighted_ratio <= 0.0 {
+            position.price
+        } else {
+            position.price * cumulative_qty[n_filled] / weighted_ratio
+        }
+    };
+
+    if p0 <= 0.0 {
+        return vec![];
+    }
+
+    // Build next SO orders from P0
+    let n_remaining = max_so - n_filled;
+    let n_orders = usize::min(max_active, n_remaining);
+
+    // Recalculate SO sizes at P0
+    let mut so_sizes_p0 = vec![0.0f64; max_so];
+    for i in 0..max_so {
+        so_sizes_p0[i] = cost_to_qty(
+            safety_cost * vol_scale.powi(i as i32),
+            p0,
+            exchange_params.c_mult,
+        );
+    }
+
+    let mut orders = Vec::with_capacity(n_orders);
+    for i in 0..n_orders {
+        let so_idx = n_filled + i;
+        let so_price = round_dn(p0 * price_ratios[so_idx], exchange_params.price_step);
+        if so_price <= exchange_params.price_step {
+            break;
+        }
+        let so_qty = round_(so_sizes_p0[so_idx], exchange_params.qty_step);
+        let so_qty = f64::max(so_qty, calc_min_entry_qty(so_price, exchange_params));
+        let order_type = OrderType::EntryDcaLong;
+        orders.push(Order {
+            qty: so_qty,
+            price: so_price,
+            order_type,
+        });
+    }
+    orders
+}
+
+pub fn calc_dca_entries_short(
+    exchange_params: &ExchangeParams,
+    bot_params: &BotParams,
+    state_params: &StateParams,
+    position: &Position,
+) -> Vec<Order> {
+    if bot_params.wallet_exposure_limit == 0.0 || state_params.balance <= 0.0 {
+        return vec![];
+    }
+    let balance = state_params.balance;
+    let wel = bot_params.wallet_exposure_limit;
+    let base_cost = balance * wel * bot_params.dca_base_order_qty_pct;
+    let safety_cost = balance * wel * bot_params.dca_safety_order_qty_pct;
+    let vol_scale = bot_params.dca_safety_order_volume_scale;
+    let step_scale = bot_params.dca_safety_order_step_scale;
+    let dev_pct = bot_params.dca_price_deviation_pct;
+    let max_so = bot_params.dca_max_safety_orders;
+    let max_active = bot_params.dca_max_active_so;
+
+    let current_price = state_params.order_book.ask;
+    if current_price <= 0.0 {
+        return vec![];
+    }
+
+    let position_size_abs = position.size.abs();
+
+    // No position — place initial entry
+    if position_size_abs == 0.0 {
+        let initial_entry_price = calc_ema_price_ask(
+            exchange_params.price_step,
+            state_params.order_book.ask,
+            state_params.ema_bands.upper,
+            bot_params.entry_initial_ema_dist,
+        );
+        if initial_entry_price <= exchange_params.price_step {
+            return vec![];
+        }
+        let base_qty = round_(
+            cost_to_qty(base_cost, initial_entry_price, exchange_params.c_mult),
+            exchange_params.qty_step,
+        );
+        let base_qty = f64::max(base_qty, calc_min_entry_qty(initial_entry_price, exchange_params));
+        return vec![Order {
+            qty: -base_qty,
+            price: initial_entry_price,
+            order_type: OrderType::EntryDcaShort,
+        }];
+    }
+
+    // Check wallet exposure before placing SOs
+    let current_we = calc_wallet_exposure(
+        exchange_params.c_mult,
+        balance,
+        position_size_abs,
+        position.price,
+    );
+    if current_we >= bot_params.wallet_exposure_limit {
+        return vec![];
+    }
+
+    // Build price ratios schedule (prices go UP from P0 for short)
+    let mut price_ratios = vec![0.0f64; max_so];
+    if max_so > 0 {
+        price_ratios[0] = 1.0 + dev_pct;
+        for i in 1..max_so {
+            price_ratios[i] = price_ratios[i - 1] * (1.0 + dev_pct * step_scale.powi(i as i32));
+        }
+    }
+
+    let base_qty_ref = cost_to_qty(base_cost, current_price, exchange_params.c_mult);
+
+    let mut so_sizes_ref = vec![0.0f64; max_so];
+    for i in 0..max_so {
+        so_sizes_ref[i] = cost_to_qty(
+            safety_cost * vol_scale.powi(i as i32),
+            current_price,
+            exchange_params.c_mult,
+        );
+    }
+
+    let mut cumulative_qty = vec![0.0f64; max_so + 1];
+    cumulative_qty[0] = base_qty_ref;
+    for n in 1..=max_so {
+        cumulative_qty[n] = cumulative_qty[n - 1] + so_sizes_ref[n - 1];
+    }
+
+    let step_size = if max_so > 0 { so_sizes_ref[0] } else { base_qty_ref };
+    let tolerance = 0.1 * step_size;
+    let mut n_filled: usize = 0;
+    let mut best_diff = f64::INFINITY;
+    for n in 0..=max_so {
+        let diff = (position_size_abs - cumulative_qty[n]).abs();
+        if diff < best_diff {
+            best_diff = diff;
+            n_filled = n;
+        }
+    }
+    if best_diff > tolerance.max(base_qty_ref * 0.5) {
+        n_filled = 0;
+    }
+
+    if n_filled >= max_so {
+        return vec![];
+    }
+
+    // Reconstruct P0 (for short, avg price is above P0)
+    let p0 = if n_filled == 0 {
+        position.price
+    } else {
+        let mut weighted_ratio = base_qty_ref;
+        for i in 0..n_filled {
+            weighted_ratio += so_sizes_ref[i] * price_ratios[i];
+        }
+        if weighted_ratio <= 0.0 {
+            position.price
+        } else {
+            position.price * cumulative_qty[n_filled] / weighted_ratio
+        }
+    };
+
+    if p0 <= 0.0 {
+        return vec![];
+    }
+
+    let n_remaining = max_so - n_filled;
+    let n_orders = usize::min(max_active, n_remaining);
+
+    let mut so_sizes_p0 = vec![0.0f64; max_so];
+    for i in 0..max_so {
+        so_sizes_p0[i] = cost_to_qty(
+            safety_cost * vol_scale.powi(i as i32),
+            p0,
+            exchange_params.c_mult,
+        );
+    }
+
+    let mut orders = Vec::with_capacity(n_orders);
+    for i in 0..n_orders {
+        let so_idx = n_filled + i;
+        let so_price = round_up(p0 * price_ratios[so_idx], exchange_params.price_step);
+        if so_price <= exchange_params.price_step {
+            break;
+        }
+        let so_qty = round_(so_sizes_p0[so_idx], exchange_params.qty_step);
+        let so_qty = f64::max(so_qty, calc_min_entry_qty(so_price, exchange_params));
+        orders.push(Order {
+            qty: -so_qty,
+            price: so_price,
+            order_type: OrderType::EntryDcaShort,
+        });
+    }
+    orders
+}
+
 pub fn calc_grid_entry_long(
     exchange_params: &ExchangeParams,
     state_params: &StateParams,
@@ -346,6 +667,10 @@ pub fn calc_next_entry_long(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Order {
+    if bot_params.dca_mode {
+        let orders = calc_dca_entries_long(exchange_params, bot_params, state_params, position);
+        return orders.into_iter().next().unwrap_or_default();
+    }
     // determines whether trailing or grid order, returns Order
     let base_wallet_exposure_limit = bot_params.wallet_exposure_limit;
     if base_wallet_exposure_limit == 0.0 || state_params.balance <= 0.0 {
@@ -902,6 +1227,10 @@ pub fn calc_next_entry_short(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Order {
+    if bot_params.dca_mode {
+        let orders = calc_dca_entries_short(exchange_params, bot_params, state_params, position);
+        return orders.into_iter().next().unwrap_or_default();
+    }
     // determines whether trailing or grid order, returns Order
     let base_wallet_exposure_limit = bot_params.wallet_exposure_limit;
     if base_wallet_exposure_limit == 0.0 || state_params.balance <= 0.0 {
@@ -1018,6 +1347,9 @@ pub fn calc_entries_long(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Vec<Order> {
+    if bot_params.dca_mode {
+        return calc_dca_entries_long(exchange_params, bot_params, state_params, position);
+    }
     let mut entries = Vec::<Order>::new();
     let mut psize = position.size;
     let mut pprice = position.price;
@@ -1069,6 +1401,9 @@ pub fn calc_entries_short(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Vec<Order> {
+    if bot_params.dca_mode {
+        return calc_dca_entries_short(exchange_params, bot_params, state_params, position);
+    }
     let mut entries = Vec::<Order>::new();
     let mut psize = position.size;
     let mut pprice = position.price;

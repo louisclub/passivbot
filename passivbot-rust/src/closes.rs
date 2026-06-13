@@ -40,6 +40,53 @@ pub fn calc_close_qty(
     }
 }
 
+pub fn calc_dca_close_long(
+    exchange_params: &ExchangeParams,
+    bot_params: &BotParams,
+    position: &Position,
+) -> Vec<Order> {
+    if position.size <= 0.0 {
+        return vec![];
+    }
+    let tp_price = round_up(
+        position.price * (1.0 + bot_params.dca_take_profit_pct),
+        exchange_params.price_step,
+    );
+    let tp_qty = round_(position.size.abs(), exchange_params.qty_step);
+    if tp_qty <= 0.0 || tp_price <= 0.0 {
+        return vec![];
+    }
+    vec![Order {
+        qty: -tp_qty,
+        price: tp_price,
+        order_type: OrderType::CloseDcaLong,
+    }]
+}
+
+pub fn calc_dca_close_short(
+    exchange_params: &ExchangeParams,
+    bot_params: &BotParams,
+    position: &Position,
+) -> Vec<Order> {
+    let position_size_abs = position.size.abs();
+    if position_size_abs <= 0.0 {
+        return vec![];
+    }
+    let tp_price = round_dn(
+        position.price * (1.0 - bot_params.dca_take_profit_pct),
+        exchange_params.price_step,
+    );
+    let tp_qty = round_(position_size_abs, exchange_params.qty_step);
+    if tp_qty <= 0.0 || tp_price <= 0.0 {
+        return vec![];
+    }
+    vec![Order {
+        qty: tp_qty,
+        price: tp_price,
+        order_type: OrderType::CloseDcaShort,
+    }]
+}
+
 pub fn calc_grid_close_long(
     exchange_params: &ExchangeParams,
     state_params: &StateParams,
@@ -224,6 +271,10 @@ pub fn calc_next_close_long(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Order {
+    if bot_params.dca_mode {
+        let closes = calc_dca_close_long(exchange_params, bot_params, position);
+        return closes.into_iter().next().unwrap_or_default();
+    }
     if position.size == 0.0 {
         // no position
         return Order::default();
@@ -538,6 +589,10 @@ pub fn calc_next_close_short(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Order {
+    if bot_params.dca_mode {
+        let closes = calc_dca_close_short(exchange_params, bot_params, position);
+        return closes.into_iter().next().unwrap_or_default();
+    }
     let position_size_abs = position.size.abs();
     if position_size_abs == 0.0 {
         // no position
@@ -683,6 +738,9 @@ pub fn calc_closes_long(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Vec<Order> {
+    if bot_params.dca_mode {
+        return calc_dca_close_long(exchange_params, bot_params, position);
+    }
     let mut closes = Vec::<Order>::new();
     let mut psize = position.size;
     for _ in 0..500 {
@@ -732,6 +790,9 @@ pub fn calc_closes_short(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Vec<Order> {
+    if bot_params.dca_mode {
+        return calc_dca_close_short(exchange_params, bot_params, position);
+    }
     let mut closes = Vec::<Order>::new();
     let mut psize = position.size;
     for _ in 0..500 {
