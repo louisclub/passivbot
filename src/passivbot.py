@@ -2147,6 +2147,16 @@ class Passivbot:
                         ema_anchor[pside].get(symbol, last_prices.get(symbol, float("nan"))),
                         entry_grid_log_ranges.get(pside, {}).get(symbol, 0.0),
                         last_prices[symbol],
+                        bool(self.bp(pside, "dca_mode", symbol)),
+                        self.bp(pside, "dca_base_order_qty_pct", symbol),
+                        self.bp(pside, "dca_safety_order_qty_pct", symbol),
+                        int(round(self.bp(pside, "dca_max_safety_orders", symbol))),
+                        int(round(self.bp(pside, "dca_max_active_so", symbol))),
+                        self.bp(pside, "dca_price_deviation_pct", symbol),
+                        self.bp(pside, "dca_safety_order_volume_scale", symbol),
+                        self.bp(pside, "dca_safety_order_step_scale", symbol),
+                        self.bp(pside, "dca_take_profit_pct", symbol),
+                        bool(self.bp(pside, "dca_market_so", symbol)),
                     )
                     closes = getattr(pbr, f"calc_closes_{pside}_py")(
                         self.qty_steps[symbol],
@@ -2171,6 +2181,8 @@ class Passivbot:
                         self.trailing_prices[symbol][pside]["max_since_open"],
                         self.trailing_prices[symbol][pside]["min_since_max"],
                         last_prices[symbol],
+                        bool(self.bp(pside, "dca_mode", symbol)),
+                        self.bp(pside, "dca_take_profit_pct", symbol),
                     )
                     ideal_orders[symbol] += [
                         (x[0], x[1], snake_of(x[2]), x[2]) for x in entries + closes

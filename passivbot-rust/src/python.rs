@@ -686,6 +686,16 @@ pub fn calc_entries_long_py(
     ema_bands_lower: f64,
     grid_log_range: f64,
     order_book_bid: f64,
+    dca_mode: bool,
+    dca_base_order_qty_pct: f64,
+    dca_safety_order_qty_pct: f64,
+    dca_max_safety_orders: usize,
+    dca_max_active_so: usize,
+    dca_price_deviation_pct: f64,
+    dca_safety_order_volume_scale: f64,
+    dca_safety_order_step_scale: f64,
+    dca_take_profit_pct: f64,
+    dca_market_so: bool,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -721,6 +731,16 @@ pub fn calc_entries_long_py(
         entry_trailing_retracement_pct,
         entry_trailing_threshold_pct,
         wallet_exposure_limit,
+        dca_mode,
+        dca_base_order_qty_pct,
+        dca_safety_order_qty_pct,
+        dca_max_safety_orders,
+        dca_max_active_so,
+        dca_price_deviation_pct,
+        dca_safety_order_volume_scale,
+        dca_safety_order_step_scale,
+        dca_take_profit_pct,
+        dca_market_so,
         ..Default::default()
     };
 
@@ -777,6 +797,16 @@ pub fn calc_entries_short_py(
     ema_bands_upper: f64,
     grid_log_range: f64,
     order_book_ask: f64,
+    dca_mode: bool,
+    dca_base_order_qty_pct: f64,
+    dca_safety_order_qty_pct: f64,
+    dca_max_safety_orders: usize,
+    dca_max_active_so: usize,
+    dca_price_deviation_pct: f64,
+    dca_safety_order_volume_scale: f64,
+    dca_safety_order_step_scale: f64,
+    dca_take_profit_pct: f64,
+    dca_market_so: bool,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -812,6 +842,16 @@ pub fn calc_entries_short_py(
         entry_trailing_retracement_pct,
         entry_trailing_threshold_pct,
         wallet_exposure_limit,
+        dca_mode,
+        dca_base_order_qty_pct,
+        dca_safety_order_qty_pct,
+        dca_max_safety_orders,
+        dca_max_active_so,
+        dca_price_deviation_pct,
+        dca_safety_order_volume_scale,
+        dca_safety_order_step_scale,
+        dca_take_profit_pct,
+        dca_market_so,
         ..Default::default()
     };
 
@@ -882,6 +922,8 @@ pub fn calc_closes_long_py(
     max_since_open: f64,
     min_since_max: f64,
     order_book_ask: f64,
+    dca_mode: bool,
+    dca_take_profit_pct: f64,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -910,6 +952,8 @@ pub fn calc_closes_long_py(
         close_trailing_threshold_pct,
         enforce_exposure_limit,
         wallet_exposure_limit,
+        dca_mode,
+        dca_take_profit_pct,
         ..Default::default()
     };
 
@@ -962,6 +1006,8 @@ pub fn calc_closes_short_py(
     max_since_open: f64,
     min_since_max: f64,
     order_book_bid: f64,
+    dca_mode: bool,
+    dca_take_profit_pct: f64,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -990,6 +1036,8 @@ pub fn calc_closes_short_py(
         close_trailing_threshold_pct,
         enforce_exposure_limit,
         wallet_exposure_limit,
+        dca_mode,
+        dca_take_profit_pct,
         ..Default::default()
     };
     let position = Position {
