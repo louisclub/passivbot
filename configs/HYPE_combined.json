@@ -1,0 +1,342 @@
+{
+  "backtest": {
+    "base_dir": "backtests",
+    "combine_ohlcvs": false,
+    "compress_cache": true,
+    "end_date": "2026-06-10",
+    "exchanges": [
+      "bybit"
+    ],
+    "gap_tolerance_ohlcvs_minutes": 120,
+    "max_warmup_minutes": 0,
+    "start_date": "2026-04-12",
+    "starting_balance": 10000,
+    "use_btc_collateral": false
+  },
+  "bot": {
+    "long": {
+      "close_grid_markup_end": 0.004371,
+      "close_grid_markup_start": 0.005278,
+      "close_grid_qty_pct": 0.9908,
+      "close_trailing_grid_ratio": -0.2225,
+      "close_trailing_qty_pct": 0.1983,
+      "close_trailing_retracement_pct": 0.001185,
+      "close_trailing_threshold_pct": 0.04829,
+      "dca_base_order_qty_pct": 0.03381,
+      "dca_market_so": false,
+      "dca_max_active_so": 3,
+      "dca_max_safety_orders": 11,
+      "dca_mode": true,
+      "dca_price_deviation_pct": 0.01964,
+      "dca_safety_order_qty_pct": 0.01155,
+      "dca_safety_order_step_scale": 1.011,
+      "dca_safety_order_volume_scale": 2.637,
+      "dca_take_profit_pct": 0.02783,
+      "ema_span_0": 1311.0,
+      "ema_span_1": 1396.0,
+      "enforce_exposure_limit": true,
+      "entry_grid_double_down_factor": 1.27,
+      "entry_grid_spacing_log_span_hours": 181.8,
+      "entry_grid_spacing_log_weight": 0,
+      "entry_grid_spacing_pct": 0.05158,
+      "entry_grid_spacing_we_weight": 1.636,
+      "entry_initial_ema_dist": -0.03817,
+      "entry_initial_qty_pct": 0.01319,
+      "entry_trailing_double_down_factor": 0.8421,
+      "entry_trailing_grid_ratio": 0.6879,
+      "entry_trailing_retracement_pct": 0.02023,
+      "entry_trailing_threshold_pct": 0.03848,
+      "filter_log_range_ema_span": 53.04,
+      "filter_volume_drop_pct": 0,
+      "filter_volume_ema_span": 1290.0,
+      "n_positions": 1,
+      "total_wallet_exposure_limit": 1,
+      "unstuck_close_pct": 0.08621,
+      "unstuck_ema_dist": -0.001238,
+      "unstuck_loss_allowance_pct": 0.01065,
+      "unstuck_threshold": 0.8532
+    },
+    "short": {
+      "close_grid_markup_end": 0.01816,
+      "close_grid_markup_start": 0.02647,
+      "close_grid_qty_pct": 0.1814,
+      "close_trailing_grid_ratio": 0.1757,
+      "close_trailing_qty_pct": 0.9097,
+      "close_trailing_retracement_pct": 0.05657,
+      "close_trailing_threshold_pct": 0.04024,
+      "ema_span_0": 1342.0,
+      "ema_span_1": 736.2,
+      "enforce_exposure_limit": true,
+      "entry_grid_double_down_factor": 1.672,
+      "entry_grid_spacing_log_span_hours": 76.6,
+      "entry_grid_spacing_log_weight": 0,
+      "entry_grid_spacing_pct": 0.01098,
+      "entry_grid_spacing_we_weight": 3.36,
+      "entry_initial_ema_dist": 0.04001,
+      "entry_initial_qty_pct": 0.01904,
+      "entry_trailing_double_down_factor": 1.172,
+      "entry_trailing_grid_ratio": 0.6132,
+      "entry_trailing_retracement_pct": 0.0393,
+      "entry_trailing_threshold_pct": 0.01347,
+      "filter_log_range_ema_span": 285.5,
+      "filter_volume_drop_pct": 0,
+      "filter_volume_ema_span": 1782.0,
+      "n_positions": 1,
+      "total_wallet_exposure_limit": 1.0,
+      "unstuck_close_pct": 0.01208,
+      "unstuck_ema_dist": 0.03287,
+      "unstuck_loss_allowance_pct": 0.01974,
+      "unstuck_threshold": 0.7666,
+      "dca_base_order_qty_pct": 0.0359,
+      "dca_market_so": false,
+      "dca_max_active_so": 4,
+      "dca_max_safety_orders": 7,
+      "dca_mode": true,
+      "dca_price_deviation_pct": 0.04691,
+      "dca_safety_order_qty_pct": 0.02112,
+      "dca_safety_order_step_scale": 1.267,
+      "dca_safety_order_volume_scale": 1.839,
+      "dca_take_profit_pct": 0.02037
+    }
+  },
+  "coin_overrides": {},
+  "live": {
+    "approved_coins": [
+      "HYPE"
+    ],
+    "auto_gs": true,
+    "empty_means_all_approved": false,
+    "execution_delay_seconds": 2,
+    "filter_by_min_effective_cost": true,
+    "forced_mode_long": "",
+    "forced_mode_short": "",
+    "ignored_coins": {
+      "long": [],
+      "short": []
+    },
+    "inactive_coin_candle_ttl_minutes": 10,
+    "leverage": 5,
+    "market_orders_allowed": false,
+    "max_disk_candles_per_symbol_per_tf": 2000000,
+    "max_memory_candles_per_symbol": 200000,
+    "max_n_cancellations_per_batch": 5,
+    "max_n_creations_per_batch": 3,
+    "max_n_restarts_per_day": 10,
+    "minimum_coin_age_days": 1,
+    "pnls_max_lookback_days": 30,
+    "price_distance_threshold": 0.002,
+    "time_in_force": "good_till_cancelled",
+    "user": "hyperliquid_01",
+    "warmup_ratio": 0.2
+  },
+  "optimize": {
+    "bounds": {
+      "long_close_grid_markup_end": [
+        0.001,
+        0.03
+      ],
+      "long_close_grid_markup_start": [
+        0.001,
+        0.03
+      ],
+      "long_close_grid_qty_pct": [
+        0.05,
+        1.0
+      ],
+      "long_close_trailing_grid_ratio": [
+        -1,
+        1
+      ],
+      "long_close_trailing_qty_pct": [
+        0.05,
+        1.0
+      ],
+      "long_close_trailing_retracement_pct": [
+        0.0001,
+        0.1
+      ],
+      "long_close_trailing_threshold_pct": [
+        -0.01,
+        0.1
+      ],
+      "long_ema_span_0": [
+        200,
+        1440
+      ],
+      "long_ema_span_1": [
+        200,
+        1440
+      ],
+      "long_entry_grid_double_down_factor": [
+        0.5,
+        3.0
+      ],
+      "long_entry_grid_spacing_log_span_hours": [
+        24,
+        336
+      ],
+      "long_entry_grid_spacing_log_weight": [
+        0.0,
+        0.0
+      ],
+      "long_entry_grid_spacing_pct": [
+        0.01,
+        0.08
+      ],
+      "long_entry_grid_spacing_we_weight": [
+        0,
+        5
+      ],
+      "long_entry_initial_ema_dist": [
+        -0.05,
+        0.001
+      ],
+      "long_entry_initial_qty_pct": [
+        0.01,
+        0.05
+      ],
+      "long_entry_trailing_double_down_factor": [
+        0.5,
+        3.0
+      ],
+      "long_entry_trailing_grid_ratio": [
+        -1,
+        1
+      ],
+      "long_entry_trailing_retracement_pct": [
+        0.005,
+        0.05
+      ],
+      "long_entry_trailing_threshold_pct": [
+        0.01,
+        0.1
+      ],
+      "long_filter_log_range_ema_span": [
+        10,
+        360
+      ],
+      "long_filter_volume_drop_pct": [
+        0.0,
+        0.0
+      ],
+      "long_filter_volume_ema_span": [
+        360,
+        2880
+      ],
+      "long_dca_base_order_qty_pct": [
+        0.005,
+        0.05
+      ],
+      "long_dca_max_active_so": [
+        2,
+        6
+      ],
+      "long_dca_max_safety_orders": [
+        3,
+        12
+      ],
+      "long_dca_price_deviation_pct": [
+        0.01,
+        0.06
+      ],
+      "long_dca_safety_order_qty_pct": [
+        0.005,
+        0.05
+      ],
+      "long_dca_safety_order_step_scale": [
+        1.0,
+        2.0
+      ],
+      "long_dca_safety_order_volume_scale": [
+        1.0,
+        3.0
+      ],
+      "long_dca_take_profit_pct": [
+        0.005,
+        0.05
+      ],
+      "long_n_positions": [
+        1,
+        1
+      ],
+      "long_total_wallet_exposure_limit": [
+        1.0,
+        1.0
+      ],
+      "long_unstuck_close_pct": [
+        0.01,
+        0.1
+      ],
+      "long_unstuck_ema_dist": [
+        -0.05,
+        0.01
+      ],
+      "long_unstuck_loss_allowance_pct": [
+        0.005,
+        0.03
+      ],
+      "long_unstuck_threshold": [
+        0.5,
+        0.9
+      ],
+      "short_n_positions": [
+        1,
+        1
+      ],
+      "short_total_wallet_exposure_limit": [
+        1.0,
+        1.0
+      ],
+      "short_dca_base_order_qty_pct": [
+        0.005,
+        0.05
+      ],
+      "short_dca_max_active_so": [
+        2,
+        6
+      ],
+      "short_dca_max_safety_orders": [
+        3,
+        12
+      ],
+      "short_dca_price_deviation_pct": [
+        0.01,
+        0.06
+      ],
+      "short_dca_safety_order_qty_pct": [
+        0.005,
+        0.05
+      ],
+      "short_dca_safety_order_step_scale": [
+        1.0,
+        2.0
+      ],
+      "short_dca_safety_order_volume_scale": [
+        1.0,
+        3.0
+      ],
+      "short_dca_take_profit_pct": [
+        0.005,
+        0.05
+      ]
+    },
+    "compress_results_file": true,
+    "crossover_probability": 0.7,
+    "enable_overrides": [],
+    "iters": 300,
+    "limits": {
+      "penalize_if_greater_than_drawdown_worst": 0.4,
+      "penalize_if_greater_than_loss_profit_ratio": 0.5
+    },
+    "mutation_probability": 0.3,
+    "n_cpus": 1,
+    "population_size": 20,
+    "round_to_n_significant_digits": 4,
+    "scoring": [
+      "adg",
+      "sharpe_ratio",
+      "drawdown_worst"
+    ],
+    "write_all_results": false
+  }
+}
