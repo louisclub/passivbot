@@ -915,16 +915,20 @@ class OHLCVManager:
         filenames = [
             f"{symbolf}{day}.csv.gz" for day in missing_days if f"{symbolf}{day}.csv.gz" in webpage
         ]
-        # Download concurrently
+        # Download with bounded concurrency to avoid OOM on low-memory VPS
+        sem = asyncio.Semaphore(4)
+
+        async def _bounded(url, day):
+            async with sem:
+                return await self.download_single_bybit(session, url, dirpath, day)
+
         async with aiohttp.ClientSession() as session:
             tasks = []
             for fn in filenames:
                 url = f"{base_url}{symbolf}/{fn}"
                 day = fn[-17:-7]
                 await self.check_rate_limit()
-                tasks.append(
-                    asyncio.create_task(self.download_single_bybit(session, url, dirpath, day))
-                )
+                tasks.append(asyncio.create_task(_bounded(url, day)))
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
     async def find_first_day_bybit(self, coin: str, webpage=None) -> float:
