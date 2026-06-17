@@ -1522,6 +1522,16 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         unstuck_ema_dist: extract_value(dict, "unstuck_ema_dist")?,
         unstuck_loss_allowance_pct: extract_value(dict, "unstuck_loss_allowance_pct")?,
         unstuck_threshold: extract_value(dict, "unstuck_threshold")?,
+        dca_mode: dict.get_item("dca_mode")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
+        dca_base_order_qty_pct: dict.get_item("dca_base_order_qty_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.015),
+        dca_safety_order_qty_pct: dict.get_item("dca_safety_order_qty_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.01),
+        dca_max_safety_orders: dict.get_item("dca_max_safety_orders")?.map(|v| v.extract::<f64>().map(|f| f.round() as usize)).transpose()?.unwrap_or(6),
+        dca_max_active_so: dict.get_item("dca_max_active_so")?.map(|v| v.extract::<f64>().map(|f| f.round() as usize)).transpose()?.unwrap_or(3),
+        dca_price_deviation_pct: dict.get_item("dca_price_deviation_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.025),
+        dca_safety_order_volume_scale: dict.get_item("dca_safety_order_volume_scale")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(1.5),
+        dca_safety_order_step_scale: dict.get_item("dca_safety_order_step_scale")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(1.2),
+        dca_take_profit_pct: dict.get_item("dca_take_profit_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.015),
+        dca_market_so: dict.get_item("dca_market_so")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
     })
 }
 
@@ -1974,6 +1984,16 @@ pub fn calc_entries_long_py(
     ema_bands_lower: f64,
     entry_volatility_logrange_ema_1h: f64,
     order_book_bid: f64,
+    dca_mode: bool,
+    dca_base_order_qty_pct: f64,
+    dca_safety_order_qty_pct: f64,
+    dca_max_safety_orders: usize,
+    dca_max_active_so: usize,
+    dca_price_deviation_pct: f64,
+    dca_safety_order_volume_scale: f64,
+    dca_safety_order_step_scale: f64,
+    dca_take_profit_pct: f64,
+    dca_market_so: bool,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -2015,6 +2035,16 @@ pub fn calc_entries_long_py(
         entry_trailing_threshold_volatility_weight,
         wallet_exposure_limit,
         risk_we_excess_allowance_pct,
+        dca_mode,
+        dca_base_order_qty_pct,
+        dca_safety_order_qty_pct,
+        dca_max_safety_orders,
+        dca_max_active_so,
+        dca_price_deviation_pct,
+        dca_safety_order_volume_scale,
+        dca_safety_order_step_scale,
+        dca_take_profit_pct,
+        dca_market_so,
         ..Default::default()
     };
 
@@ -2076,6 +2106,16 @@ pub fn calc_entries_short_py(
     ema_bands_upper: f64,
     entry_volatility_logrange_ema_1h: f64,
     order_book_ask: f64,
+    dca_mode: bool,
+    dca_base_order_qty_pct: f64,
+    dca_safety_order_qty_pct: f64,
+    dca_max_safety_orders: usize,
+    dca_max_active_so: usize,
+    dca_price_deviation_pct: f64,
+    dca_safety_order_volume_scale: f64,
+    dca_safety_order_step_scale: f64,
+    dca_take_profit_pct: f64,
+    dca_market_so: bool,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -2117,6 +2157,16 @@ pub fn calc_entries_short_py(
         entry_trailing_threshold_volatility_weight,
         wallet_exposure_limit,
         risk_we_excess_allowance_pct,
+        dca_mode,
+        dca_base_order_qty_pct,
+        dca_safety_order_qty_pct,
+        dca_max_safety_orders,
+        dca_max_active_so,
+        dca_price_deviation_pct,
+        dca_safety_order_volume_scale,
+        dca_safety_order_step_scale,
+        dca_take_profit_pct,
+        dca_market_so,
         ..Default::default()
     };
 
@@ -2189,6 +2239,8 @@ pub fn calc_closes_long_py(
     max_since_open: f64,
     min_since_max: f64,
     order_book_ask: f64,
+    dca_mode: bool,
+    dca_take_profit_pct: f64,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -2219,6 +2271,8 @@ pub fn calc_closes_long_py(
         wallet_exposure_limit,
         risk_we_excess_allowance_pct,
         risk_wel_enforcer_threshold,
+        dca_mode,
+        dca_take_profit_pct,
         ..Default::default()
     };
 
@@ -2272,6 +2326,8 @@ pub fn calc_closes_short_py(
     max_since_open: f64,
     min_since_max: f64,
     order_book_bid: f64,
+    dca_mode: bool,
+    dca_take_profit_pct: f64,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -2302,6 +2358,8 @@ pub fn calc_closes_short_py(
         wallet_exposure_limit,
         risk_we_excess_allowance_pct,
         risk_wel_enforcer_threshold,
+        dca_mode,
+        dca_take_profit_pct,
         ..Default::default()
     };
     let position = Position {
