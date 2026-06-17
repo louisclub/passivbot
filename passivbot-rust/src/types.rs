@@ -442,6 +442,27 @@ pub struct BotParams {
     pub unstuck_ema_dist: f64,
     pub unstuck_loss_allowance_pct: f64,
     pub unstuck_threshold: f64,
+    // 3Commas DCA mode — active when dca_mode: true
+    #[serde(default)]
+    pub dca_mode: bool,
+    #[serde(default)]
+    pub dca_base_order_qty_pct: f64,
+    #[serde(default)]
+    pub dca_safety_order_qty_pct: f64,
+    #[serde(default)]
+    pub dca_max_safety_orders: usize,
+    #[serde(default)]
+    pub dca_max_active_so: usize,
+    #[serde(default)]
+    pub dca_price_deviation_pct: f64,
+    #[serde(default)]
+    pub dca_safety_order_volume_scale: f64,
+    #[serde(default)]
+    pub dca_safety_order_step_scale: f64,
+    #[serde(default)]
+    pub dca_take_profit_pct: f64,
+    #[serde(default)]
+    pub dca_market_so: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -512,6 +533,11 @@ pub enum OrderType {
     CloseAutoReduceWelLong = 24,
     CloseAutoReduceWelShort = 25,
 
+    EntryDcaLong = 26,
+    EntryDcaShort = 27,
+    CloseDcaLong = 28,
+    CloseDcaShort = 29,
+
     Empty = 65535,
 }
 
@@ -545,6 +571,8 @@ impl OrderType {
                 | CloseAutoReduceTwelLong
                 | CloseAutoReduceWelLong
                 | ClosePanicLong
+                | EntryDcaLong
+                | CloseDcaLong
         )
     }
 }

@@ -1490,6 +1490,16 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         unstuck_ema_dist: extract_value(dict, "unstuck_ema_dist")?,
         unstuck_loss_allowance_pct: extract_value(dict, "unstuck_loss_allowance_pct")?,
         unstuck_threshold: extract_value(dict, "unstuck_threshold")?,
+        dca_mode: dict.get_item("dca_mode")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
+        dca_base_order_qty_pct: dict.get_item("dca_base_order_qty_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.01),
+        dca_safety_order_qty_pct: dict.get_item("dca_safety_order_qty_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.01),
+        dca_max_safety_orders: dict.get_item("dca_max_safety_orders")?.map(|v| v.extract::<f64>().map(|f| f.round() as usize)).transpose()?.unwrap_or(6),
+        dca_max_active_so: dict.get_item("dca_max_active_so")?.map(|v| v.extract::<f64>().map(|f| f.round() as usize)).transpose()?.unwrap_or(3),
+        dca_price_deviation_pct: dict.get_item("dca_price_deviation_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.025),
+        dca_safety_order_volume_scale: dict.get_item("dca_safety_order_volume_scale")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(1.5),
+        dca_safety_order_step_scale: dict.get_item("dca_safety_order_step_scale")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(1.2),
+        dca_take_profit_pct: dict.get_item("dca_take_profit_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.015),
+        dca_market_so: dict.get_item("dca_market_so")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
     })
 }
 
