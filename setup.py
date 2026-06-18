@@ -1,10 +1,16 @@
 from setuptools import setup, find_packages
-from setuptools_rust import RustExtension
+from setuptools_rust import RustExtension, Binding
 
 
 def parse_requirements(filename):
-    with open(filename, "r") as file:
-        return [line.strip() for line in file if line.strip() and not line.startswith("#")]
+    lines = []
+    with open(filename, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("-r") or line.startswith("-e"):
+                continue
+            lines.append(line)
+    return lines
 
 
 setup(
@@ -13,10 +19,19 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     rust_extensions=[
-        RustExtension("passivbot_rust", path="passivbot-rust/Cargo.toml", binding="pyo3")
+        RustExtension("passivbot_rust", path="passivbot-rust/Cargo.toml", binding=Binding.PyO3)
     ],
-    install_requires=parse_requirements("requirements.txt"),
-    setup_requires=["setuptools-rust>=1.9.0", "wheel"],
+    install_requires=parse_requirements("requirements-live.txt"),
+    extras_require={
+        "full": parse_requirements("requirements.txt"),
+        "dev": ["pytest", "black", "ruff"],
+    },
+    entry_points={
+        "console_scripts": [
+            "passivbot=passivbot_cli:main",
+        ],
+    },
+    setup_requires=["setuptools", "wheel", "setuptools-rust>=1.9.0"],
     include_package_data=True,
     zip_safe=False,
 )
