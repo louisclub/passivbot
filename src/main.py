@@ -132,6 +132,11 @@ def recompile_rust():
 
 
 def manage_rust_compilation():
+    try:
+        import passivbot_rust  # noqa: F401
+        return  # already installed via pip, skip maturin build
+    except ImportError:
+        pass
     if check_compilation_needed():
         if acquire_lock():
             try:
