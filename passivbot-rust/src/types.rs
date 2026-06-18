@@ -458,6 +458,35 @@ pub struct BotParams {
     pub dca_take_profit_pct: f64,
     #[serde(default)]
     pub dca_market_so: bool,
+    // Rescue mode — active when rescue_mode: true
+    #[serde(default)]
+    pub rescue_mode: bool,
+    #[serde(default = "default_rescue_profit_band_pct")]
+    pub rescue_profit_band_pct: f64,
+    #[serde(default = "default_rescue_breakeven_base_pct")]
+    pub rescue_breakeven_base_pct: f64,
+    #[serde(default = "default_rescue_grid_interval_pct")]
+    pub rescue_grid_interval_pct: f64,
+    #[serde(default = "default_rescue_breakeven_growth")]
+    pub rescue_breakeven_growth: f64,
+    #[serde(default = "default_rescue_max_flips")]
+    pub rescue_max_flips: usize,
+}
+
+fn default_rescue_profit_band_pct() -> f64 {
+    0.20
+}
+fn default_rescue_breakeven_base_pct() -> f64 {
+    0.10
+}
+fn default_rescue_grid_interval_pct() -> f64 {
+    0.02
+}
+fn default_rescue_breakeven_growth() -> f64 {
+    1.5
+}
+fn default_rescue_max_flips() -> usize {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -533,6 +562,15 @@ pub enum OrderType {
     CloseDcaLong = 28,
     CloseDcaShort = 29,
 
+    EntryRescueFlipShort = 30,
+    EntryRescueFlipLong = 31,
+    EntryRescueGridShort = 32,
+    EntryRescueGridLong = 33,
+    CloseRescueProfitShort = 34,
+    CloseRescueProfitLong = 35,
+    CloseRescueReflipShort = 36,
+    CloseRescueReflipLong = 37,
+
     Empty = 65535,
 }
 
@@ -568,6 +606,10 @@ impl OrderType {
                 | ClosePanicLong
                 | EntryDcaLong
                 | CloseDcaLong
+                | EntryRescueFlipLong
+                | EntryRescueGridLong
+                | CloseRescueProfitLong
+                | CloseRescueReflipLong
         )
     }
 }

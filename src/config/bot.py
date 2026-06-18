@@ -445,6 +445,22 @@ def ensure_bot_defaults(
             ("unstuck_ema_dist", 0.0, "omitted unstuck disables EMA trigger"),
             ("unstuck_loss_allowance_pct", 0.0, "omitted unstuck disables feature"),
             ("unstuck_threshold", 0.0, "omitted unstuck disables feature"),
+            ("dca_mode", False, "DCA omitted defaults to disabled"),
+            ("dca_base_order_qty_pct", 0.015, "DCA compatibility default"),
+            ("dca_safety_order_qty_pct", 0.01, "DCA compatibility default"),
+            ("dca_max_safety_orders", 6, "DCA compatibility default"),
+            ("dca_max_active_so", 3, "DCA compatibility default"),
+            ("dca_price_deviation_pct", 0.025, "DCA compatibility default"),
+            ("dca_safety_order_volume_scale", 1.5, "DCA compatibility default"),
+            ("dca_safety_order_step_scale", 1.2, "DCA compatibility default"),
+            ("dca_take_profit_pct", 0.015, "DCA compatibility default"),
+            ("dca_market_so", False, "DCA compatibility default"),
+            ("rescue_mode", False, "rescue omitted defaults to disabled"),
+            ("rescue_profit_band_pct", 0.20, "rescue compatibility default"),
+            ("rescue_breakeven_base_pct", 0.10, "rescue compatibility default"),
+            ("rescue_grid_interval_pct", 0.02, "rescue compatibility default"),
+            ("rescue_breakeven_growth", 1.5, "rescue compatibility default"),
+            ("rescue_max_flips", 5, "rescue compatibility default"),
         ]:
             if key not in bot_cfg:
                 _set_hydrated_bot_value(
@@ -457,6 +473,26 @@ def ensure_bot_defaults(
                     tracker=tracker,
                 )
                 bot_cfg = result["bot"][pside]
+        if bot_cfg.get("dca_mode", False):
+            for key, default_value, reason in [
+                ("close_grid_markup_start", 0.005, "dca_mode active; close_grid unused"),
+                ("close_grid_markup_end", 0.003, "dca_mode active; close_grid unused"),
+                ("close_grid_qty_pct", 0.5, "dca_mode active; close_grid unused"),
+                ("entry_grid_double_down_factor", 1.4, "dca_mode active; entry_grid unused"),
+                ("entry_grid_spacing_pct", 0.02, "dca_mode active; entry_grid unused"),
+                ("entry_initial_qty_pct", 0.01, "dca_mode active; dca_base_order_qty_pct used instead"),
+            ]:
+                if key not in bot_cfg:
+                    _set_hydrated_bot_value(
+                        result,
+                        pside=pside,
+                        key=key,
+                        value=default_value,
+                        reason=reason,
+                        verbose=verbose,
+                        tracker=tracker,
+                    )
+                    bot_cfg = result["bot"][pside]
         if "entry_trailing_double_down_factor" not in bot_cfg:
             default_entry_trailing_double_down_factor = bot_cfg.get(
                 "entry_grid_double_down_factor", 1.0

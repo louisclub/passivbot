@@ -3,6 +3,7 @@ use crate::constants::{CLOSE, HIGH, LONG, LOW, SHORT, VOLUME};
 use crate::entries::calc_min_entry_qty;
 use crate::equity_hard_stop_loss as ehsl;
 use crate::orchestrator;
+use crate::rescue::{RescueLeg, RescueState};
 use crate::orchestrator::{
     EmaBundle as OrchestratorEmaBundle, EmaTimeframeBundle as OrchestratorEmaTimeframeBundle,
     EntryPeekHints, ForagerHysteresisState,
@@ -15,7 +16,7 @@ use crate::types::{
 };
 use crate::utils::{
     calc_auto_unstuck_allowance, calc_new_psize_pprice, calc_pnl_long, calc_pnl_short,
-    calc_wallet_exposure, hysteresis, qty_to_cost, round_, round_dn, round_up,
+    calc_wallet_exposure, cost_to_qty, hysteresis, qty_to_cost, round_, round_dn, round_up,
 };
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -522,6 +523,7 @@ pub struct Backtest<'a> {
     liquidated: bool,
     final_hard_stop_metrics: Option<HardStopMetrics>,
     final_strategy_equity_metrics: Option<StrategyEquityMetricsBundle>,
+    rescue_states: HashMap<usize, RescueState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1865,6 +1867,7 @@ impl<'a> Backtest<'a> {
             liquidated: false,
             final_hard_stop_metrics: None,
             final_strategy_equity_metrics: None,
+            rescue_states: HashMap::new(),
             // EMAs already initialized in `emas`; no rolling buffers needed
         }
     }
@@ -1927,6 +1930,7 @@ impl<'a> Backtest<'a> {
                 }
                 self.initialize_btc_collateral_if_needed(k);
                 self.update_open_orders_all(k);
+                self.inject_rescue_orders(k);
             }
             if self.equity_tracking_active {
                 self.update_equities(k);
@@ -3743,6 +3747,548 @@ impl<'a> Backtest<'a> {
 
     fn update_open_orders_all(&mut self, k: usize) {
         self.update_open_orders_all_orchestrator(k);
+    }
+
+    /// CP8 — Rescue trigger + single flip round-trip.
+    ///
+    /// Called once per step after `update_open_orders_all`.  For each symbol:
+    ///
+    /// 1. DCA long maxed + rescue_mode + !in_rescue  →  emit flip orders, set state.
+    /// 2. in_rescue + leg==Short                     →  place trivial profit-exit limit.
+    /// 3. in_rescue (either leg)                     →  strip DCA orders for this symbol.
+    fn inject_rescue_orders(&mut self, k: usize) {
+        // Collect active coin indices to avoid borrow issues.
+        let indices: Vec<usize> = self.active_coin_indices.clone();
+
+        for idx in indices {
+            let bp_long = &self.bot_params[idx].long;
+            if !bp_long.rescue_mode {
+                continue;
+            }
+
+            // --- Check rescue state ---
+            let in_rescue = self
+                .rescue_states
+                .get(&idx)
+                .map(|s| s.in_rescue)
+                .unwrap_or(false);
+
+            if !in_rescue {
+                // --- Trigger: DCA long maxed? ---
+                // Requires: DCA mode on, position exists, n_filled >= max_so
+                if !bp_long.dca_mode {
+                    continue;
+                }
+                let pos_long = match self.positions.long.get(&idx) {
+                    Some(p) if p.size > 0.0 => *p,
+                    _ => continue,
+                };
+                let max_so = bp_long.dca_max_safety_orders;
+                if max_so == 0 {
+                    continue;
+                }
+                // Replicate n_filled inference from calc_dca_entries_long
+                let bp = &self.bot_params[idx].long;
+                let balance = self.balance.usd_total_balance;
+                let wel = bp.wallet_exposure_limit;
+                let current_price = self.hlcvs_value(k, idx, CLOSE).max(f64::EPSILON);
+                let base_cost = balance * wel * bp.dca_base_order_qty_pct;
+                let safety_cost = balance * wel * bp.dca_safety_order_qty_pct;
+                let vol_scale = bp.dca_safety_order_volume_scale;
+                let c_mult = self.exchange_params_list[idx].c_mult;
+                let qty_step = self.exchange_params_list[idx].qty_step;
+
+                let base_qty_ref = cost_to_qty(base_cost, current_price, c_mult);
+                let mut so_sizes_ref = vec![0.0f64; max_so];
+                for i in 0..max_so {
+                    so_sizes_ref[i] =
+                        cost_to_qty(safety_cost * vol_scale.powi(i as i32), current_price, c_mult);
+                }
+                let mut cumulative_qty = vec![0.0f64; max_so + 1];
+                cumulative_qty[0] = base_qty_ref;
+                for n in 1..=max_so {
+                    cumulative_qty[n] = cumulative_qty[n - 1] + so_sizes_ref[n - 1];
+                }
+                let step_size = so_sizes_ref[0];
+                let tolerance = (0.1 * step_size).max(base_qty_ref * 0.5);
+                let mut n_filled: usize = 0;
+                let mut best_diff = f64::INFINITY;
+                for n in 0..=max_so {
+                    let diff = (pos_long.size - cumulative_qty[n]).abs();
+                    if diff < best_diff {
+                        best_diff = diff;
+                        n_filled = n;
+                    }
+                }
+                if best_diff > tolerance {
+                    // position doesn't match schedule — not triggering
+                    continue;
+                }
+                if n_filled < max_so {
+                    // Not yet maxed
+                    continue;
+                }
+
+                // --- Trigger fires: flip long → short ---
+                let flip_price = current_price;
+                let long_psize = pos_long.size;
+                let long_pprice = pos_long.price;
+
+                // Close full long: qty is negative (close long = sell)
+                let close_qty = -round_(long_psize, qty_step);
+                // Short entry: qty is negative (short entry = sell)
+                // Equal notional: old_notional / flip_price
+                let notional = qty_to_cost(long_psize, long_pprice, c_mult);
+                let short_qty = -round_(
+                    cost_to_qty(notional, flip_price, c_mult),
+                    qty_step,
+                );
+
+                // Close long rescue reflip order (market execution)
+                let close_long_order = BacktestOrder {
+                    order: Order {
+                        qty: close_qty,
+                        price: flip_price,
+                        order_type: OrderType::CloseRescueReflipLong,
+                    },
+                    execution_type: orchestrator::ExecutionType::Market,
+                };
+                // Short entry rescue flip order (market execution)
+                let entry_short_order = BacktestOrder {
+                    order: Order {
+                        qty: short_qty,
+                        price: flip_price,
+                        order_type: OrderType::EntryRescueFlipShort,
+                    },
+                    execution_type: orchestrator::ExecutionType::Market,
+                };
+
+                // Replace long open_orders for this symbol with only the close
+                let long_bundle = self.open_orders.long.entry(idx).or_default();
+                long_bundle.entries.clear();
+                long_bundle.closes.clear();
+                long_bundle.closes.push(close_long_order);
+
+                // Place short entry into short open_orders
+                let short_bundle = self.open_orders.short.entry(idx).or_default();
+                short_bundle.entries.clear();
+                short_bundle.closes.clear();
+                short_bundle.entries.push(entry_short_order);
+
+                // Set rescue state
+                let bp_now = &self.bot_params[idx].long;
+                let breakeven_target_pct = bp_now.rescue_breakeven_base_pct;
+                self.rescue_states.insert(
+                    idx,
+                    RescueState {
+                        in_rescue: true,
+                        leg: RescueLeg::Short,
+                        anchor_price: flip_price,
+                        flip_count: 1,
+                        breakeven_target_pct,
+                    },
+                );
+            } else {
+                // Already in rescue — apply bypass gate (strip DCA orders)
+                // and place rescue-specific orders.
+                let state = match self.rescue_states.get(&idx) {
+                    Some(s) => s.clone(),
+                    None => continue,
+                };
+
+                // Bypass: clear DCA orders for this symbol on both sides
+                if let Some(bundle) = self.open_orders.long.get_mut(&idx) {
+                    bundle.entries.clear();
+                    bundle.closes.clear();
+                }
+                if let Some(bundle) = self.open_orders.short.get_mut(&idx) {
+                    bundle.entries.clear();
+                    bundle.closes.clear();
+                }
+
+                let ep = &self.exchange_params_list[idx];
+                let qty_step = ep.qty_step;
+                let price_step = ep.price_step;
+                let c_mult = ep.c_mult;
+                let balance = self.balance.usd_total_balance;
+                let current_price = self.hlcvs_value(k, idx, CLOSE).max(f64::EPSILON);
+                let bp = &self.bot_params[idx].long;
+                let profit_band_pct = bp.rescue_profit_band_pct;
+                let grid_interval_pct = bp.rescue_grid_interval_pct;
+                let breakeven_target_pct = state.breakeven_target_pct;
+                let anchor_price = state.anchor_price;
+                let max_flips = bp.rescue_max_flips;
+                let breakeven_growth = bp.rescue_breakeven_growth;
+                // Use short WE limit for sizing martingale entries
+                let wel_short = self.bot_params[idx].short.wallet_exposure_limit;
+                let wel_long = bp.wallet_exposure_limit;
+
+                match state.leg {
+                    RescueLeg::Short => {
+                        // Check if short position still open
+                        let short_pos = match self.positions.short.get(&idx) {
+                            Some(p) if p.size < 0.0 => *p,
+                            _ => {
+                                // Short position gone — rescue succeeded
+                                self.rescue_states.remove(&idx);
+                                continue;
+                            }
+                        };
+
+                        // --- Reflip check: price >= anchor*(1+breakeven_target_pct) ---
+                        let reflip_threshold = anchor_price * (1.0 + breakeven_target_pct);
+                        if current_price >= reflip_threshold {
+                            if state.flip_count >= max_flips {
+                                // Max flips reached — graceful exit: place close only, clear state on fill
+                                // Place a market close of the short
+                                let close_qty = round_(short_pos.size.abs(), qty_step);
+                                let close_order = BacktestOrder {
+                                    order: Order {
+                                        qty: close_qty,
+                                        price: current_price,
+                                        order_type: OrderType::CloseRescueReflipShort,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Market,
+                                };
+                                let short_bundle = self.open_orders.short.entry(idx).or_default();
+                                short_bundle.entries.clear();
+                                short_bundle.closes.clear();
+                                short_bundle.closes.push(close_order);
+                                // Mark in_rescue=false so when position clears, state is gone
+                                self.rescue_states.remove(&idx);
+                            } else {
+                                // Reflip: close short + open long
+                                let reflip_price = current_price;
+                                let close_qty = round_(short_pos.size.abs(), qty_step);
+                                let notional = qty_to_cost(short_pos.size.abs(), short_pos.price.abs(), c_mult);
+                                let long_qty = round_(cost_to_qty(notional, reflip_price, c_mult), qty_step);
+
+                                let close_short_order = BacktestOrder {
+                                    order: Order {
+                                        qty: close_qty,
+                                        price: reflip_price,
+                                        order_type: OrderType::CloseRescueReflipShort,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Market,
+                                };
+                                let entry_long_order = BacktestOrder {
+                                    order: Order {
+                                        qty: long_qty,
+                                        price: reflip_price,
+                                        order_type: OrderType::EntryRescueFlipLong,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Market,
+                                };
+
+                                let short_bundle = self.open_orders.short.entry(idx).or_default();
+                                short_bundle.entries.clear();
+                                short_bundle.closes.clear();
+                                short_bundle.closes.push(close_short_order);
+
+                                let long_bundle = self.open_orders.long.entry(idx).or_default();
+                                long_bundle.entries.clear();
+                                long_bundle.closes.clear();
+                                long_bundle.entries.push(entry_long_order);
+
+                                // Update rescue state
+                                let new_breakeven = breakeven_target_pct * breakeven_growth;
+                                self.rescue_states.insert(idx, RescueState {
+                                    in_rescue: true,
+                                    leg: RescueLeg::Long,
+                                    anchor_price: reflip_price,
+                                    flip_count: state.flip_count + 1,
+                                    breakeven_target_pct: new_breakeven,
+                                });
+                            }
+                            continue;
+                        }
+
+                        // --- Normal short rescue grid ---
+                        let short_bundle = self.open_orders.short.entry(idx).or_default();
+                        short_bundle.entries.clear();
+                        short_bundle.closes.clear();
+
+                        // a) Profit-band closes (below anchor): place limit buys at each interval
+                        let deepest_profit = anchor_price * (1.0 - profit_band_pct);
+                        let n_profit_levels = if grid_interval_pct > 0.0 {
+                            ((profit_band_pct / grid_interval_pct).floor() as usize).max(1)
+                        } else {
+                            1
+                        };
+                        let qty_per_level = round_(
+                            short_pos.size.abs() / n_profit_levels as f64,
+                            qty_step,
+                        ).max(qty_step);
+
+                        for i in 1..=n_profit_levels {
+                            let level_price = round_dn(
+                                anchor_price * (1.0 - grid_interval_pct * i as f64),
+                                price_step,
+                            );
+                            if level_price < deepest_profit * 0.999 {
+                                break;
+                            }
+                            let close_order = BacktestOrder {
+                                order: Order {
+                                    qty: qty_per_level,
+                                    price: level_price,
+                                    order_type: OrderType::CloseRescueProfitShort,
+                                },
+                                execution_type: orchestrator::ExecutionType::Limit,
+                            };
+                            short_bundle.closes.push(close_order);
+                        }
+
+                        // b) Add-to-short entries (above current price, up to reflip threshold)
+                        // Clip qty to WE cap
+                        let cur_short_exposure = calc_wallet_exposure(
+                            c_mult,
+                            balance,
+                            short_pos.size.abs(),
+                            short_pos.price.abs(),
+                        );
+                        if cur_short_exposure < wel_short {
+                            let n_entry_levels = if grid_interval_pct > 0.0 {
+                                ((breakeven_target_pct / grid_interval_pct).floor() as usize).max(1)
+                            } else {
+                                1
+                            };
+                            // Base entry qty: same notional as one profit level
+                            let base_entry_cost = balance * wel_short * 0.1;
+                            let base_entry_qty = cost_to_qty(base_entry_cost, current_price, c_mult);
+                            let mut running_psize = short_pos.size; // negative
+
+                            for i in 1..=n_entry_levels {
+                                let entry_price = round_up(
+                                    anchor_price * (1.0 + grid_interval_pct * i as f64),
+                                    price_step,
+                                );
+                                if entry_price > reflip_threshold {
+                                    break;
+                                }
+                                // WE clip
+                                let new_size = running_psize - base_entry_qty; // more negative
+                                let new_exposure = calc_wallet_exposure(
+                                    c_mult, balance, new_size.abs(), entry_price,
+                                );
+                                if new_exposure > wel_short {
+                                    // Would exceed cap — clip
+                                    let max_additional_notional =
+                                        (wel_short - cur_short_exposure) * balance / c_mult;
+                                    if max_additional_notional <= 0.0 {
+                                        break;
+                                    }
+                                    let clipped_qty = round_(
+                                        max_additional_notional / entry_price,
+                                        qty_step,
+                                    );
+                                    if clipped_qty < qty_step {
+                                        break;
+                                    }
+                                    let entry_order = BacktestOrder {
+                                        order: Order {
+                                            qty: -clipped_qty,
+                                            price: entry_price,
+                                            order_type: OrderType::EntryRescueGridShort,
+                                        },
+                                        execution_type: orchestrator::ExecutionType::Limit,
+                                    };
+                                    short_bundle.entries.push(entry_order);
+                                    break; // cap reached, stop
+                                }
+                                let entry_order = BacktestOrder {
+                                    order: Order {
+                                        qty: -round_(base_entry_qty, qty_step),
+                                        price: entry_price,
+                                        order_type: OrderType::EntryRescueGridShort,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Limit,
+                                };
+                                short_bundle.entries.push(entry_order);
+                                running_psize -= base_entry_qty;
+                            }
+                        }
+                    }
+                    RescueLeg::Long => {
+                        // Mirror: rescue is now long, profit on upside, reflip on downside
+                        let long_pos = match self.positions.long.get(&idx) {
+                            Some(p) if p.size > 0.0 => *p,
+                            _ => {
+                                // Long position gone — rescue succeeded
+                                self.rescue_states.remove(&idx);
+                                continue;
+                            }
+                        };
+
+                        // --- Reflip check: price <= anchor*(1-breakeven_target_pct) ---
+                        let reflip_threshold = anchor_price * (1.0 - breakeven_target_pct);
+                        if current_price <= reflip_threshold {
+                            if state.flip_count >= max_flips {
+                                // Graceful exit
+                                let close_qty = -round_(long_pos.size, qty_step);
+                                let close_order = BacktestOrder {
+                                    order: Order {
+                                        qty: close_qty,
+                                        price: current_price,
+                                        order_type: OrderType::CloseRescueReflipLong,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Market,
+                                };
+                                let long_bundle = self.open_orders.long.entry(idx).or_default();
+                                long_bundle.entries.clear();
+                                long_bundle.closes.clear();
+                                long_bundle.closes.push(close_order);
+                                self.rescue_states.remove(&idx);
+                            } else {
+                                // Reflip: close long + open short
+                                let reflip_price = current_price;
+                                let notional = qty_to_cost(long_pos.size, long_pos.price, c_mult);
+                                let short_qty = -round_(cost_to_qty(notional, reflip_price, c_mult), qty_step);
+
+                                let close_long_order = BacktestOrder {
+                                    order: Order {
+                                        qty: -round_(long_pos.size, qty_step),
+                                        price: reflip_price,
+                                        order_type: OrderType::CloseRescueReflipLong,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Market,
+                                };
+                                let entry_short_order = BacktestOrder {
+                                    order: Order {
+                                        qty: short_qty,
+                                        price: reflip_price,
+                                        order_type: OrderType::EntryRescueFlipShort,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Market,
+                                };
+
+                                let long_bundle = self.open_orders.long.entry(idx).or_default();
+                                long_bundle.entries.clear();
+                                long_bundle.closes.clear();
+                                long_bundle.closes.push(close_long_order);
+
+                                let short_bundle = self.open_orders.short.entry(idx).or_default();
+                                short_bundle.entries.clear();
+                                short_bundle.closes.clear();
+                                short_bundle.entries.push(entry_short_order);
+
+                                let new_breakeven = breakeven_target_pct * breakeven_growth;
+                                self.rescue_states.insert(idx, RescueState {
+                                    in_rescue: true,
+                                    leg: RescueLeg::Short,
+                                    anchor_price: reflip_price,
+                                    flip_count: state.flip_count + 1,
+                                    breakeven_target_pct: new_breakeven,
+                                });
+                            }
+                            continue;
+                        }
+
+                        // --- Normal long rescue grid ---
+                        let long_bundle = self.open_orders.long.entry(idx).or_default();
+                        long_bundle.entries.clear();
+                        long_bundle.closes.clear();
+
+                        // a) Profit-band closes (above anchor): limit sells
+                        let highest_profit = anchor_price * (1.0 + profit_band_pct);
+                        let n_profit_levels = if grid_interval_pct > 0.0 {
+                            ((profit_band_pct / grid_interval_pct).floor() as usize).max(1)
+                        } else {
+                            1
+                        };
+                        let qty_per_level = round_(
+                            long_pos.size / n_profit_levels as f64,
+                            qty_step,
+                        ).max(qty_step);
+
+                        for i in 1..=n_profit_levels {
+                            let level_price = round_up(
+                                anchor_price * (1.0 + grid_interval_pct * i as f64),
+                                price_step,
+                            );
+                            if level_price > highest_profit * 1.001 {
+                                break;
+                            }
+                            let close_order = BacktestOrder {
+                                order: Order {
+                                    qty: -qty_per_level,
+                                    price: level_price,
+                                    order_type: OrderType::CloseRescueProfitLong,
+                                },
+                                execution_type: orchestrator::ExecutionType::Limit,
+                            };
+                            long_bundle.closes.push(close_order);
+                        }
+
+                        // b) Add-to-long entries (below current price, down to reflip threshold)
+                        let cur_long_exposure = calc_wallet_exposure(
+                            c_mult,
+                            balance,
+                            long_pos.size,
+                            long_pos.price,
+                        );
+                        if cur_long_exposure < wel_long {
+                            let n_entry_levels = if grid_interval_pct > 0.0 {
+                                ((breakeven_target_pct / grid_interval_pct).floor() as usize).max(1)
+                            } else {
+                                1
+                            };
+                            let base_entry_cost = balance * wel_long * 0.1;
+                            let base_entry_qty = cost_to_qty(base_entry_cost, current_price, c_mult);
+                            let mut running_psize = long_pos.size;
+
+                            for i in 1..=n_entry_levels {
+                                let entry_price = round_dn(
+                                    anchor_price * (1.0 - grid_interval_pct * i as f64),
+                                    price_step,
+                                );
+                                if entry_price < reflip_threshold {
+                                    break;
+                                }
+                                let new_size = running_psize + base_entry_qty;
+                                let new_exposure = calc_wallet_exposure(
+                                    c_mult, balance, new_size, entry_price,
+                                );
+                                if new_exposure > wel_long {
+                                    let max_additional_notional =
+                                        (wel_long - cur_long_exposure) * balance / c_mult;
+                                    if max_additional_notional <= 0.0 {
+                                        break;
+                                    }
+                                    let clipped_qty = round_(
+                                        max_additional_notional / entry_price,
+                                        qty_step,
+                                    );
+                                    if clipped_qty < qty_step {
+                                        break;
+                                    }
+                                    let entry_order = BacktestOrder {
+                                        order: Order {
+                                            qty: clipped_qty,
+                                            price: entry_price,
+                                            order_type: OrderType::EntryRescueGridLong,
+                                        },
+                                        execution_type: orchestrator::ExecutionType::Limit,
+                                    };
+                                    long_bundle.entries.push(entry_order);
+                                    break;
+                                }
+                                let entry_order = BacktestOrder {
+                                    order: Order {
+                                        qty: round_(base_entry_qty, qty_step),
+                                        price: entry_price,
+                                        order_type: OrderType::EntryRescueGridLong,
+                                    },
+                                    execution_type: orchestrator::ExecutionType::Limit,
+                                };
+                                long_bundle.entries.push(entry_order);
+                                running_psize += base_entry_qty;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn forager_hysteresis_state_from_open_orders(&self) -> ForagerHysteresisState {

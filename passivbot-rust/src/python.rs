@@ -1532,6 +1532,12 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         dca_safety_order_step_scale: dict.get_item("dca_safety_order_step_scale")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(1.2),
         dca_take_profit_pct: dict.get_item("dca_take_profit_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.015),
         dca_market_so: dict.get_item("dca_market_so")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
+        rescue_mode: dict.get_item("rescue_mode")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
+        rescue_profit_band_pct: dict.get_item("rescue_profit_band_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.20),
+        rescue_breakeven_base_pct: dict.get_item("rescue_breakeven_base_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.10),
+        rescue_grid_interval_pct: dict.get_item("rescue_grid_interval_pct")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.02),
+        rescue_breakeven_growth: dict.get_item("rescue_breakeven_growth")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(1.5),
+        rescue_max_flips: dict.get_item("rescue_max_flips")?.map(|v| v.extract::<f64>().map(|f| f.round() as usize)).transpose()?.unwrap_or(5),
     })
 }
 

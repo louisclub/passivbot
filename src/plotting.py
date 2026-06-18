@@ -437,6 +437,33 @@ def plot_fills(df, fdf_, side: int = 0, plot_whole_df: bool = False, title=""):
             ):
                 ax.plot([idx_start, idx_end], [price_val, price_val], "r--")
 
+    # Rescue orders: plot all rescue order types in orange (#FF8C00)
+    rescue_fills = fdf[_mask(type_series, "rescue")]
+    if not rescue_fills.empty:
+        rescue_types = rescue_fills["type"].astype(str)
+        # Entry rescue orders: circle marker
+        mask_rescue_entry = _mask(rescue_types, "entry_rescue")
+        if mask_rescue_entry.any():
+            ax.scatter(
+                rescue_fills.index[mask_rescue_entry],
+                rescue_fills.loc[mask_rescue_entry, "price"],
+                c="#FF8C00",
+                marker="o",
+                zorder=5,
+                label="rescue entry",
+            )
+        # Close rescue orders: x marker
+        mask_rescue_close = _mask(rescue_types, "close_rescue")
+        if mask_rescue_close.any():
+            ax.scatter(
+                rescue_fills.index[mask_rescue_close],
+                rescue_fills.loc[mask_rescue_close, "price"],
+                c="#FF8C00",
+                marker="x",
+                zorder=5,
+                label="rescue close",
+            )
+
     ax.set_title(title)
     ax.set_xlabel("Time")
     ax.set_ylabel("Price + Fills")
@@ -634,11 +661,43 @@ def plot_fills_forager(
     ax.plot(candle_x, hlcc_high, "g-.", alpha=0.6, label="high", zorder=0.8)
 
     type_series = fdfc["type"].astype(str)
-    longs = fdfc[type_series.str.contains("long", regex=False)]
-    shorts = fdfc[type_series.str.contains("short", regex=False)]
-    if len(longs) == 0 and len(shorts) == 0:
+    # Rescue orders are plotted in orange and excluded from regular long/short groups
+    rescue_mask = type_series.str.contains("rescue", regex=False)
+    rescues = fdfc[rescue_mask]
+    longs = fdfc[type_series.str.contains("long", regex=False) & ~rescue_mask]
+    shorts = fdfc[type_series.str.contains("short", regex=False) & ~rescue_mask]
+    if len(longs) == 0 and len(shorts) == 0 and len(rescues) == 0:
         return plt
     legend = ["close", "low", "high"]
+    # Plot rescue orders in orange (#FF8C00) with diamond markers
+    if len(rescues) > 0:
+        rescues_types = rescues["type"].astype(str)
+        rescues_price_series = rescues["price"]
+        if fast and np.issubdtype(rescues_price_series.dtype, np.number):
+            rescues_price = rescues_price_series.to_numpy(copy=False)
+        else:
+            rescues_price = pd.to_numeric(rescues_price_series, errors="coerce").to_numpy()
+        mask_rescue_entry = rescues_types.str.contains("entry", regex=False).to_numpy()
+        mask_rescue_close = rescues_types.str.contains("close", regex=False).to_numpy()
+        if mask_rescue_entry.any():
+            ax.scatter(
+                _x_for_fills(rescues.iloc[np.flatnonzero(mask_rescue_entry)]),
+                rescues_price[mask_rescue_entry],
+                c="#FF8C00",
+                marker="D",
+                zorder=4.0,
+                s=20,
+            )
+        if mask_rescue_close.any():
+            ax.scatter(
+                _x_for_fills(rescues.iloc[np.flatnonzero(mask_rescue_close)]),
+                rescues_price[mask_rescue_close],
+                c="#FF8C00",
+                marker="X",
+                zorder=4.0,
+                s=20,
+            )
+        legend.extend(["rescue_entries", "rescue_closes"])
     if len(longs) > 0:
         longs_types = longs["type"].astype(str)
         longs_price_series = longs["price"]
